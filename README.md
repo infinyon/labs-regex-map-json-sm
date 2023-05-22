@@ -1,6 +1,6 @@
 ## Regex-Map JSON Smartmodule
 
-SmartModule to read JSON Records, look-up values, run regex to generate a result, and append the result in a new key. This SmartModule is [map] type, where each record-in generates a new records-out.
+SmartModule to read a JSON record, look-up values, run regex, and write the result back into the record. This SmartModule is [map] type, where each record-in generates a new records-out.
 
 ### Input Record
 
