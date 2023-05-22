@@ -111,7 +111,7 @@ fn get_params(params: SmartModuleExtraParams) -> Result<Vec<Operation>> {
     }
 }
 
-/// Loop over operations and conpile regex
+/// Loop over operations and compile regex
 fn compile_regex(operations: Vec<Operation>) -> Result<Vec<Operation>> {
     let mut result: Vec<Operation> = vec![];
 
