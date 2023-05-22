@@ -12,29 +12,81 @@ use fluvio_smartmodule::{
     eyre
 };
 
-static REGEX: OnceCell<Vec<RegexMatch>> = OnceCell::new();
+static OPS: OnceCell<Vec<Operation>> = OnceCell::new();
 const PARAM_NAME: &str = "spec";
 
 #[derive(Debug, Serialize, Deserialize)]
-struct RegexParams {
-    source: String,
-    destination: String,
-    regex: String
+#[serde(rename_all = "snake_case")]
+enum Operation {
+    Capture(Capture),
+    Replace(Replace)
 }
 
-#[derive(Debug)]
-struct RegexMatch {
-    source: String,
-    destination: String,
-    re: Regex,  
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct Capture {
+    regex: String,
+    target: String,
+    output: String,
+
+    #[serde(skip)]
+    re: Option<Regex>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct Replace {
+    regex: String,
+    target: String,
+    with: String,
+
+    #[serde(skip)]
+    re: Option<Regex>,
+}
+
+impl Operation {
+    pub fn get_re(&self) -> &Option<Regex> {
+        match self {
+            Operation::Capture(c) => &c.re,
+            Operation::Replace(r) => &r.re
+        }
+    }
+
+    pub fn get_target(&self) -> &String {
+        match self {
+            Operation::Capture(c) => &c.target,
+            Operation::Replace(r) => &r.target
+        }
+    }
+
+    pub fn get_output(&self) -> &String {
+        match self {
+            Operation::Capture(c) => &c.output,
+            Operation::Replace(r) => &r.target
+        }
+    }
+
+    pub fn clone_with_regex(&self) -> Result<Operation> {
+        let op = match self {
+            Operation::Capture(c) => {
+                let mut new = c.clone();
+                new.re = Some(Regex::new(&c.regex.as_str())?);
+                Operation::Capture(new)
+            },
+            Operation::Replace(r) => {
+                let mut new = r.clone();
+                new.re = Some(Regex::new(&r.regex.as_str())?);
+                Operation::Replace(new)
+            }
+        };
+        Ok(op)
+    }
 }
 
 /// Parse input paramters
-fn get_params(params: SmartModuleExtraParams) -> Result<Vec<RegexParams>> {
+fn get_params(params: SmartModuleExtraParams) -> Result<Vec<Operation>> {
     if let Some(raw_spec) = params.get(PARAM_NAME) {
         match serde_json::from_str(raw_spec) {
-            Ok(regex_params) => {
-                Ok(regex_params)
+            Ok(operations) => {
+                Ok(operations)
             }
             Err(err) => {
                 eprintln!("unable to parse spec from params: {err:?}");
@@ -46,15 +98,15 @@ fn get_params(params: SmartModuleExtraParams) -> Result<Vec<RegexParams>> {
     }
 }
 
-/// Use input parameters to compile a list of regular expressions
-fn compile_regex_list(regex_params: Vec<RegexParams>) -> Result<Vec<RegexMatch>> {
-    let mut result: Vec<RegexMatch> = vec![];
+/// Loop over operations and conpile regex
+fn compile_regex(operations: Vec<Operation>) -> Result<Vec<Operation>> {
+    let mut result: Vec<Operation> = vec![];
 
-    for r in regex_params {
-        let re = Regex::new(&r.regex.as_str())?;
-        let res = RegexMatch {source: r.source, destination: r.destination, re};
-        result.push(res);
+    let mut iter = operations.into_iter();
+    while let Some(op) = iter.next() {
+        result.push(op.clone_with_regex()?);
     }
+
     Ok(result)
 }
 
@@ -76,14 +128,19 @@ fn extract_json_field(data: &str, lookup: &String) -> Result<String> {
     Ok(result)
 }
 
-/// Run regex to capture the value, and returne in a (target, value) pair
-fn capture_regex_value(text: &String, regex: &Regex) -> Result<String> {
+/// Run regex `capture` and return the result
+fn process_regex_capture(text: &String, regex: &Regex) -> Result<String> {
     let capture = match regex.captures(text.as_str()) {
         Some(caps) => caps.get(1).map_or("", |m| m.as_str()),
         None => ""
     };
 
     Ok(capture.to_string())
+}
+
+/// Run regex `replace` and return the result
+fn process_regex_replace(text: &String, regex: &Regex, with: &String) -> Result<String> {
+    Ok(regex.replace_all(text, with).to_string())
 }
 
 /// Merge json trees
@@ -104,7 +161,7 @@ fn merge_json(a: &mut Value, b: &Value) {
 ///     "/root/one" -> "test" - inserts {"root": {"one": "text"}}
 ///     "/root" -> "test" - inserts {"root": "text"}
 /// Note, if the path matches an existing value exists, that value is replaced.
-fn add_json_key_value_recursive(json: &mut Value, key_path:String, new_value: Value ) {
+fn add_json_key_value_recursive(json: &mut Value, key_path: &String, new_value: Value ) {
     // Check json path
     // Found a match, merge json objects at this hiearchy
     let some_found_json = json.pointer_mut(key_path.as_str());
@@ -137,33 +194,48 @@ fn add_json_key_value_recursive(json: &mut Value, key_path:String, new_value: Va
 
     // Build parent key-path and try again
     let new_key_path = format!("/{}", path_array.join("/"));
-    add_json_key_value(json, new_key_path, r_val);
+    add_json_key_value(json, &new_key_path, r_val);
 
 }
 
 /// Project badly formatted key_path (without /) from wipping out the existing json
 /// Improperly formatted destinations, leave the original json untouched
-fn add_json_key_value(json: &mut Value, key_path:String, new_value: Value ) {
+fn add_json_key_value(json: &mut Value, key_path: &String, new_value: Value ) {
     if key_path.contains("/") {
         add_json_key_value_recursive(json, key_path, new_value)
     }
 }
 
 /// Traverse the regex list, extract JSON values, compute regex, and save output
-fn compute_regex_append_values(record: &Record, regex_list: &Vec<RegexMatch>) -> Result<Value> {
+fn apply_regex_ops_to_json_record(record: &Record, ops: &Vec<Operation>) -> Result<Value> {
     let data: &str = std::str::from_utf8(record.value.as_ref())?;
     let mut json:Value = serde_json::from_str(data)?;
 
-    for regex in regex_list {
+    let mut iter = ops.into_iter();
+    while let Some(op) = iter.next() {
+        // Skip if no Regex
+        let some_re = op.get_re();
+        if some_re.is_none() {
+            continue;
+        }
 
         // Skip if source doesn't exist
-        let value = extract_json_field(data, &regex.source)?;
+        let value = extract_json_field(data, &op.get_target())?;
         if value.is_empty() {
             continue;
         }
 
+        // Generate Regex result
+        let result = match op {
+            Operation::Capture(c) => {
+                process_regex_capture(&value, c.re.as_ref().unwrap())?
+            },
+            Operation::Replace(r) => {
+                process_regex_replace(&value, &r.re.as_ref().unwrap(), &r.with)?
+            }
+        };
+
         // Skip if regex does not compute
-        let result = capture_regex_value(&value, &regex.re)?;
         if result.is_empty() {
             continue;
         }
@@ -171,33 +243,33 @@ fn compute_regex_append_values(record: &Record, regex_list: &Vec<RegexMatch>) ->
         // update json record with the new values
         add_json_key_value(
             &mut json, 
-            regex.destination.clone(), 
+            op.get_output(), 
             Value::from(result)
         );
     }
-    
+
     Ok(json)
-}
+}    
 
 #[smartmodule(map)]
 pub fn map(record: &Record) -> Result<(Option<RecordData>, RecordData)> {
     let key = record.key.clone();
-    let regex_list = REGEX.get().wrap_err("regex is not initialized")?;
+    let ops = OPS.get().wrap_err("regex operations not initialized")?;
 
-    let result = compute_regex_append_values(record, regex_list)?;
-
+    let result = apply_regex_ops_to_json_record(record, ops)?;
     Ok((key, serde_json::to_string(&result)?.into()))
 }
 
 #[smartmodule(init)]
 fn init(params: SmartModuleExtraParams) -> Result<()> {
-    let regex_params = get_params(params)?;
-    let regex_list = compile_regex_list(regex_params)?;
+    let ops = get_params(params)?;
 
-    REGEX.set(regex_list).expect("regex is already initialized");
+    let regex_ops = compile_regex(ops)?;
+    OPS.set(regex_ops).expect("regex operations already initialized");
 
     Ok(())
 }
+
 
 #[cfg(test)]
 mod tests {
@@ -211,61 +283,34 @@ mod tests {
         "pub_date": "Mon, 17 Apr 2023 15:54:45 GMT",
         "title": "23-20670 Abby Lynn Hardy",
         "name": {
-            "first": "Abby", 
-            "last": "Hardy"
+            "first": "Abby",
+            "last": "Hardy",
+            "ssn": "123-45-6789"
         }
     }"#;
 
     #[test]
-    fn test_compile_regex_list() {
-        let params = vec![RegexParams {
-            regex: r#"(?i)Third:\s+(\w+)\b"#.to_owned(), 
-            source: "src".to_owned(), 
-            destination: "dst".to_owned()
-        }];
+    fn test_compile_regex() {
+        let params = vec![
+            Operation::Capture(Capture {
+                regex: r"(?i)First:\s+(\w+)\b".to_owned(), 
+                target: "/description".to_owned(), 
+                output: "/parsed/first".to_owned(),
+                re: None
+            }),
+            Operation::Replace(Replace {
+                regex: r"\d{3}-\d{2}-\d{4}".to_owned(),
+                target: "/name/ssn".to_owned(),
+                with: "***-**-****".to_owned(),
+                re: None
+            })
+        ];
 
-        let result = compile_regex_list(params);
-        assert_eq!(result.is_ok(), true);
-    }
-
-    #[test]
-    fn capture_regex_value_test() {
-        let input: &str = r#"First: bk Second: 4 Third: 13 Fourth: Jack, tr Sec  [Encased string - (data)] (<a href='https://example.com/doc1/182031340621?pdf_header=&de_seq_num=44&caseid=456177'>9</a>)"#;
-
-        // First
-        let re = Regex::new(r"(?i)First:\s+(\w+)\b").unwrap();
-        let expected = "bk".to_owned();
-
-        let result = capture_regex_value(&input.to_owned(), &re);
-        assert_eq!(result.unwrap(), expected);
-
-        // Second
-        let re = Regex::new(r"(?i)Second:\s+(\w+)\b").unwrap();
-        let expected = "4".to_owned();
-
-        let result = capture_regex_value(&input.to_owned(), &re);
-        assert_eq!(result.unwrap(), expected);
-
-        // Third
-        let re = Regex::new(r"(?i)Third:\s+(\w+)\b").unwrap();
-        let expected = "13".to_owned();
-
-        let result = capture_regex_value(&input.to_owned(), &re);
-        assert_eq!(result.unwrap(), expected);
-
-        // Fourth
-        let re = Regex::new(r"(?i)Fourth:\s+([\w,\s\.\']*\S)\s*\[").unwrap();
-        let expected = "Jack, tr Sec".to_owned();
-
-        let result = capture_regex_value(&input.to_owned(), &re);
-        assert_eq!(result.unwrap(), expected);
-
-        // doc-link
-        let re = Regex::new(r"href='([^']+)'").unwrap();
-        let expected = "https://example.com/doc1/182031340621?pdf_header=&de_seq_num=44&caseid=456177".to_owned();
-
-        let result = capture_regex_value(&input.to_owned(), &re);
-        assert_eq!(result.unwrap(), expected);
+        let result = compile_regex(params);
+        assert!(result.is_ok());
+        for r in result.unwrap() {
+            assert!(r.get_re().is_some());
+        }
     }
 
     #[test]
@@ -282,7 +327,7 @@ mod tests {
 
         // nested tree
         let lookup = "/name".to_owned();
-        let result = r#"{"first": "Abby", "last": "Hardy"}"#;
+        let result = r#"{"first": "Abby", "last": "Hardy", "ssn":"123-45-6789"}"#;
         let expected: Value = serde_json::from_str(result).unwrap();
         assert_eq!(expected.to_string(), extract_json_field(INPUT, &lookup).unwrap());
 
@@ -290,6 +335,77 @@ mod tests {
         let lookup = "/invalid".to_owned();
         let result = "";
         assert_eq!(result.to_owned(), extract_json_field(INPUT, &lookup).unwrap());
+    }
+
+    #[test]
+    fn process_regex_capture_test() {
+        let input: &str = r#"First: bk Second: 4 Third: 13 Fourth: Jack, tr Sec  [Encased string - (data)] (<a href='https://example.com/doc1/182031340621?pdf_header=&de_seq_num=44&caseid=456177'>9</a>)"#;
+
+        // First
+        let re = Regex::new(r"(?i)First:\s+(\w+)\b").unwrap();
+        let expected = "bk".to_owned();
+
+        let result = process_regex_capture(&input.to_owned(), &re);
+        assert_eq!(result.unwrap(), expected);
+
+        // Second
+        let re = Regex::new(r"(?i)Second:\s+(\w+)\b").unwrap();
+        let expected = "4".to_owned();
+
+        let result = process_regex_capture(&input.to_owned(), &re);
+        assert_eq!(result.unwrap(), expected);
+
+        // Third
+        let re = Regex::new(r"(?i)Third:\s+(\w+)\b").unwrap();
+        let expected = "13".to_owned();
+
+        let result = process_regex_capture(&input.to_owned(), &re);
+        assert_eq!(result.unwrap(), expected);
+
+        // Fourth
+        let re = Regex::new(r"(?i)Fourth:\s+([\w,\s\.\']*\S)\s*\[").unwrap();
+        let expected = "Jack, tr Sec".to_owned();
+
+        let result = process_regex_capture(&input.to_owned(), &re);
+        assert_eq!(result.unwrap(), expected);
+
+        // doc-link
+        let re = Regex::new(r"href='([^']+)'").unwrap();
+        let expected = "https://example.com/doc1/182031340621?pdf_header=&de_seq_num=44&caseid=456177".to_owned();
+
+        let result = process_regex_capture(&input.to_owned(), &re);
+        assert_eq!(result.unwrap(), expected);
+    }
+
+    #[test]
+    fn process_regex_replace_test() {
+
+        // Replace all
+        let input = r"123-45-6789".to_owned();
+        let re = Regex::new(r"\d{3}-\d{2}-\d{4}").unwrap();
+        let with = "***-**-***".to_owned();
+        let expected = "***-**-***".to_owned();
+
+        let result = process_regex_replace(&input, &re, &with);
+        assert_eq!(result.unwrap(), expected);
+
+        // Replace subset
+        let input = r"Alice Jackson, ssn 123-45-6789, location: NY".to_owned();
+        let re = Regex::new(r"\d{3}-\d{2}-\d{4}").unwrap();
+        let with = "***-**-***".to_owned();
+        let expected = "Alice Jackson, ssn ***-**-***, location: NY".to_owned();
+
+        let result = process_regex_replace(&input, &re, &with);
+        assert_eq!(result.unwrap(), expected);
+
+        // Replace none
+        let input = r"not a match".to_owned();
+        let re = Regex::new(r"\d{3}-\d{2}-\d{4}").unwrap();
+        let with = "***-**-***".to_owned();
+        let expected = "not a match".to_owned();
+
+        let result = process_regex_replace(&input, &re, &with);
+        assert_eq!(result.unwrap(), expected);
     }
 
     #[test]
@@ -301,7 +417,7 @@ mod tests {
         let new_v:Value = serde_json::json!("xyz");
         let expected:Value = serde_json::from_str(r#"{"root": "xyz"}"#).unwrap();
 
-        add_json_key_value(&mut json, key_path, new_v);
+        add_json_key_value(&mut json, &key_path, new_v);
         assert_eq!(json, expected);
 
         // Test: Empty tree
@@ -310,7 +426,7 @@ mod tests {
         let new_v:Value = serde_json::json!("xyz");
         let expected:Value = serde_json::from_str(r#"{"root": "xyz"}"#).unwrap();
 
-        add_json_key_value(&mut json, key_path, new_v);
+        add_json_key_value(&mut json, &key_path, new_v);
         assert_eq!(json, expected);
 
         // Test: Invalid Node
@@ -319,7 +435,7 @@ mod tests {
         let new_v:Value = serde_json::json!("xyz");
         let expected:Value = serde_json::json!("");
 
-        add_json_key_value(&mut json, key_path, new_v);
+        add_json_key_value(&mut json, &key_path, new_v);
         assert_eq!(json, expected);
 
         // Test: Add peer leaf
@@ -328,7 +444,7 @@ mod tests {
         let new_v:Value = serde_json::json!(3);
         let expected :Value = serde_json::from_str(r#"{"root": {"aaa" : 1 , "bbb": 2, "ccc": 3}}"#).unwrap();
 
-        add_json_key_value(&mut json, key_path, new_v);
+        add_json_key_value(&mut json, &key_path, new_v);
         assert_eq!(json, expected);
 
         // Test: Add peer middle leave
@@ -337,7 +453,7 @@ mod tests {
         let new_v:Value = serde_json::json!(3);
         let expected :Value = serde_json::from_str(r#"{"root": {"aaa" : {"bbb": 2}, "ccc": 3}}"#).unwrap();
 
-        add_json_key_value(&mut json, key_path, new_v);
+        add_json_key_value(&mut json, &key_path, new_v);
         assert_eq!(json, expected);
 
         // Test: Add deep nested leave
@@ -346,7 +462,7 @@ mod tests {
         let new_v:Value = serde_json::json!(3);
         let expected :Value = serde_json::from_str(r#"{"root": {"aaa" : {"bbb": 2, "ccc": 3}}}"#).unwrap();
 
-        add_json_key_value(&mut json, key_path, new_v);
+        add_json_key_value(&mut json, &key_path, new_v);
         assert_eq!(json, expected);
 
         // Test: Swap content
@@ -355,13 +471,13 @@ mod tests {
         let new_v:Value = serde_json::json!(3);
         let expected :Value = serde_json::from_str(r#"{"root": {"ccc": 3}}"#).unwrap();
 
-        add_json_key_value(&mut json, key_path, new_v);
+        add_json_key_value(&mut json, &key_path, new_v);
         assert_eq!(json, expected);
 
     }
 
     #[test]
-    fn compute_regex_append_values_tests() {
+    fn apply_regex_ops_to_json_record_tests() {
         static EXPECTED: &str = r#"{
             "dedup_key": "6fcb9fe530c24613ed1df3e51c0e86addd794251f49ec6cd77fd4381cc0e0ac2",
             "description": "First: bk Second: 4 Third: 13 Fourth: Jack, tr Sec  [Encased string - (data)] (<a href='https://example.com/doc1/182031340621?pdf_header=&de_seq_num=44&caseid=456177'>9</a>)",
@@ -371,7 +487,8 @@ mod tests {
             "title": "23-20670 Abby Lynn Hardy",
             "name": {
                 "first": "Abby", 
-                "last": "Hardy"
+                "last": "Hardy",
+                "ssn": "***-**-****"
             },
             "parsed": {
                 "first": "bk",
@@ -381,37 +498,48 @@ mod tests {
                 "doc-link": "https://example.com/doc1/182031340621?pdf_header=&de_seq_num=44&caseid=456177"
             }
         }"#;
-        let spec: Vec<RegexMatch> = 
-            vec![ 
-                RegexMatch {
-                    source: "/description".to_owned(), 
-                    destination: "/parsed/first".to_owned(),
-                    re: Regex::new(r"(?i)First:\s+(\w+)\b").unwrap()
-                },
-                RegexMatch {
-                    source: "/description".to_owned(), 
-                    destination: "/parsed/second".to_owned(),
-                    re: Regex::new(r"(?i)Second:\s+(\w+)\b").unwrap()
-                },
-                RegexMatch {
-                    source: "/description".to_owned(), 
-                    destination: "/parsed/third".to_owned(),
-                    re: Regex::new(r"(?i)Third:\s+(\w+)\b").unwrap()
-                },
-                RegexMatch {
-                    source: "/description".to_owned(), 
-                    destination: "/parsed/fourth".to_owned(),
-                    re: Regex::new(r"(?i)Fourth:\s+([\w,\s\.\']*\S)\s*\[").unwrap()
-                },
-                RegexMatch {
-                    source: "/description".to_owned(), 
-                    destination: "/parsed/doc-link".to_owned(),
-                    re: Regex::new(r"href='([^']+)'").unwrap()
-                }                              
-            ];
+        let spec: Vec<Operation> = vec![
+            Operation::Capture(Capture {
+                regex: r"(?i)First:\s+(\w+)\b".to_owned(), 
+                target: "/description".to_owned(), 
+                output: "/parsed/first".to_owned(),
+                re: None
+            }),
+            Operation::Capture(Capture {
+                regex: r"(?i)Second:\s+(\w+)\b".to_owned(),
+                target: "/description".to_owned(), 
+                output: "/parsed/second".to_owned(),
+                re: None
+            }),
+            Operation::Capture(Capture {
+                regex: r"(?i)Third:\s+(\w+)\b".to_owned(),
+                target: "/description".to_owned(), 
+                output: "/parsed/third".to_owned(),
+                re: None
+            }),
+            Operation::Capture(Capture {
+                regex: r"(?i)Fourth:\s+([\w,\s\.\']*\S)\s*\[".to_owned(),
+                target: "/description".to_owned(), 
+                output: "/parsed/fourth".to_owned(),
+                re: None
+            }),
+            Operation::Capture(Capture {
+                regex: r"href='([^']+)'".to_owned(),
+                target: "/description".to_owned(), 
+                output: "/parsed/doc-link".to_owned(),
+                re: None
+            }),
+            Operation::Replace(Replace {
+                regex: r"\d{3}-\d{2}-\d{4}".to_owned(),
+                target: "/name/ssn".to_owned(),
+                with: "***-**-****".to_owned(),
+                re: None
+            })
+        ];
 
         let record = Record::new(INPUT);
-        let result = compute_regex_append_values(&record, &spec).unwrap();
+        let ops = compile_regex(spec).unwrap();
+        let result = apply_regex_ops_to_json_record(&record, &ops).unwrap();
         let expected_value:Value = serde_json::from_str(EXPECTED).unwrap();
         assert_eq!(result, expected_value);
     }
