@@ -1,7 +1,7 @@
 use regex::Regex;
 use once_cell::sync::OnceCell;
 use eyre::ContextCompat;
-use serde::{Serialize, Deserialize};
+use serde::Deserialize;
 use serde_json::Value;
 
 use fluvio_smartmodule::{
@@ -15,14 +15,14 @@ use fluvio_smartmodule::{
 static OPS: OnceCell<Vec<Operation>> = OnceCell::new();
 const PARAM_NAME: &str = "spec";
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Deserialize)]
 #[serde(rename_all = "snake_case")]
 enum Operation {
     Capture(Capture),
     Replace(Replace)
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 struct Capture {
     regex: String,
     target: String,
@@ -32,7 +32,7 @@ struct Capture {
     re: Option<Regex>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 struct Replace {
     regex: String,
     target: String,
