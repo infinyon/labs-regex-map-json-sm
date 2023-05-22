@@ -79,6 +79,19 @@ impl Operation {
         };
         Ok(op)
     }
+
+    pub fn run_regex(&self, text: &String) -> Result<String> {
+        let result = match self {
+            Operation::Capture(c) => {
+                process_regex_capture(text, c.re.as_ref().unwrap())?
+            },
+            Operation::Replace(r) => {
+                process_regex_replace(text, &r.re.as_ref().unwrap(), &r.with)?
+            }
+        };
+        Ok(result)
+    }
+
 }
 
 /// Parse input paramters
@@ -225,17 +238,8 @@ fn apply_regex_ops_to_json_record(record: &Record, ops: &Vec<Operation>) -> Resu
             continue;
         }
 
-        // Generate Regex result
-        let result = match op {
-            Operation::Capture(c) => {
-                process_regex_capture(&value, c.re.as_ref().unwrap())?
-            },
-            Operation::Replace(r) => {
-                process_regex_replace(&value, &r.re.as_ref().unwrap(), &r.with)?
-            }
-        };
-
-        // Skip if regex does not compute
+        // Skip if regex match empty string
+        let result = op.run_regex(&value)?;
         if result.is_empty() {
             continue;
         }
