@@ -2,7 +2,7 @@
 name = "regex-map-json"
 version = "0.1.0"
 authors = ["Fluvio Contributors <team@fluvio.io>"]
-description = "Regex transformations SmartModule"
+description = "Regex JSON transformations SmartModule"
 edition = "2021"
 license = "Apache-2.0"
 
