@@ -1,0 +1,13 @@
+{
+  "dedup_key": "6fcb9fe530c24613ed1df3e51c0e86addd794251f49ec6cd77fd4381cc0e0ac2",
+  "description": "First: bk Second: 4 Third: 13 Fourth: Jack, tr Sec  [Encased string - (data)] (<a href='https://example.com/doc1/182031340621?pdf_header=&de_seq_num=44&caseid=456177'>9</a>)",
+  "last_build_date": "Tue, 18 Apr 2023 15:00:01 GMT",
+  "link": "https://www.example.comv/cgi-bin/DktRpt.pl?456177",
+  "pub_date": "Mon, 17 Apr 2023 15:54:45 GMT",
+  "title": "23-20670 Abby Lynn Hardy",
+  "name": {
+      "first": "Abby",
+      "last": "Hardy",
+      "ssn": "123-45-6789"
+  }  
+}

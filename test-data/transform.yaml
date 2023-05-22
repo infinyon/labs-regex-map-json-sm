@@ -1,0 +1,28 @@
+transforms:
+  - uses: infinyon-labs/regex-map-json@0.1.1
+    with:
+      spec:
+        - capture:
+            regex: "(?i)First:\\s+(\\w+)\\b"
+            target: "/description"
+            output: "/parsed/first"      
+        - capture:
+            regex: "(?i)Second:\\s+(\\w+)\\b"
+            target: "/description"
+            output: "/parsed/second"
+        - capture: 
+            regex: "(?i)Third:\\s+(\\w+)\\b"
+            target: "/description"
+            output: "/parsed/third"     
+        - capture: 
+            regex: "(?i)Fourth:\\s+([\\w,\\s\\.\\']*\\S)\\s*\\["
+            target: "/description"
+            output: "/parsed/fourth"
+        - capture:
+            regex: "href='([^']+)'"
+            target: "/description"
+            output: "/parsed/doc-link"
+        - replace:
+            regex: "\\d{3}-\\d{2}-\\d{4}"
+            target: "/name/ssn"
+            with: "***-**-****"

@@ -1,0 +1,12 @@
+[package]
+name = "regex-map-json"
+group = "infinyon-labs"
+version = "0.1.1"
+apiVersion = "0.1.0"
+description = "Regex transformations on JSON values"
+license = "Apache-2.0"
+visibility = "public"
+
+[[params]]
+name = "spec"
+description = "Regex specification"
