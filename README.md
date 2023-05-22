@@ -8,12 +8,12 @@ A JSON object:
 
 ```json
 {
-  "description": "First: bk Second: 4 Third: 13 Fourth: Jack, tr Sec  [Encased string - (data)] (<a href='https://example.com/doc1/182031340621?pdf_header=&de_seq_num=44&caseid=456177'>9</a>)",
-  "name": {
-      "first": "Abby",
-      "last": "Hardy",
-      "ssn": "123-45-6789"
-  }
+  "customer": {
+    "first": "Abby",
+    "last": "Hardy",
+    "ssn": "123-45-6789"
+  },
+  "description": "Highlights: 43 Entity: Draft Documents [Encased string - (data)] (<a href='https://example.com/doc1/182031340621?pdf_header=&de_seq_num=44&caseid=456177'>9</a>)"
 }
 ```
 
@@ -40,32 +40,24 @@ In this example, we'll use the following transformation spec:
 
 ```yaml
 transforms:
-  - uses: <group>/regex-map-json@0.1.1
+  - uses: <group>/regex-map-json@0.1.0
     with:
       spec:
         - capture:
-            regex: "(?i)First:\\s+(\\w+)\\b"
+            regex: "(?i)Highlights:\\s+(\\w+)\\b"
             target: "/description"
-            output: "/parsed/first"      
-        - capture:
-            regex: "(?i)Second:\\s+(\\w+)\\b"
-            target: "/description"
-            output: "/parsed/second"
+            output: "/parsed/highlights"        
         - capture: 
-            regex: "(?i)Third:\\s+(\\w+)\\b"
+            regex: "(?i)Entity:\\s+([\\w,\\s\\.\\']*\\S)\\s*\\["
             target: "/description"
-            output: "/parsed/third"     
-        - capture: 
-            regex: "(?i)Fourth:\\s+([\\w,\\s\\.\\']*\\S)\\s*\\["
-            target: "/description"
-            output: "/parsed/fourth"
+            output: "/parsed/entity"
         - capture:
             regex: "href='([^']+)'"
             target: "/description"
             output: "/parsed/doc-link"
         - replace:
             regex: "\\d{3}-\\d{2}-\\d{4}"
-            target: "/name/ssn"
+            target: "/customer/ssn"
             with: "***-**-****"
 ```
 
@@ -75,18 +67,14 @@ A JSON object with a new `parsed` tree, and masked `ssn` value:
 
 ```json
 {
-  "description": "First: bk Second: 4 Third: 13 Fourth: Jack, tr Sec  [Encased string - (data)] (<a href='https://example.com/doc1/182031340621?pdf_header=&de_seq_num=44&caseid=456177'>9</a>)",
-  "name": {
+  "customer": {
     "first": "Abby",
     "last": "Hardy",
     "ssn": "***-**-****"
-  },  
+  },
+  "description": "Highlights: 43 Entity: Draft Documents [Encased string - (data)] (<a href='https://example.com/doc1/182031340621?pdf_header=&de_seq_num=44&caseid=456177'>9</a>)",
   "parsed": {
-    "doc-link": "https://example.com/doc1/182031340621?pdf_header=&de_seq_num=44&caseid=456177",
-    "first": "bk",
-    "fourth": "Jack, tr Sec",
-    "second": "4",
-    "third": "13"
+    "highlights": "43"
   }
 }
 ```
@@ -107,7 +95,7 @@ smdk build
 Use `smdk` to test:
 
 ```bash
-smdk test --file ./test-data/input.json --raw -e spec='[{"capture": {"regex": "(?i)First:\\s+(\\w+)\\b", "target": "/description", "output": "/parsed/first"}}, {"replace": {"regex": "\\d{3}-\\d{2}-\\d{4}", "target": "/name/ssn", "with": "***-**-****" }}]'
+smdk test --file ./test-data/input.json --raw -e spec='[{"capture": {"regex": "(?i)Highlights:\\s+(\\w+)\\b", "target": "/description", "output": "/parsed/highlights"}}, {"replace": {"regex": "\\d{3}-\\d{2}-\\d{4}", "target": "/customer/ssn", "with": "***-**-****" }}]'
 ```
 
 ### Cluster Test
