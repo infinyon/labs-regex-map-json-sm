@@ -387,8 +387,8 @@ mod tests {
         // Replace all
         let input = r"123-45-6789".to_owned();
         let re = Regex::new(r"\d{3}-\d{2}-\d{4}").unwrap();
-        let with = "***-**-***".to_owned();
-        let expected = "***-**-***".to_owned();
+        let with = "***-**-****".to_owned();
+        let expected = "***-**-****".to_owned();
 
         let result = process_regex_replace(&input, &re, &with);
         assert_eq!(result.unwrap(), expected);
@@ -396,8 +396,8 @@ mod tests {
         // Replace subset
         let input = r"Alice Jackson, ssn 123-45-6789, location: NY".to_owned();
         let re = Regex::new(r"\d{3}-\d{2}-\d{4}").unwrap();
-        let with = "***-**-***".to_owned();
-        let expected = "Alice Jackson, ssn ***-**-***, location: NY".to_owned();
+        let with ="***-**-****".to_owned();
+        let expected = "Alice Jackson, ssn ***-**-****, location: NY".to_owned();
 
         let result = process_regex_replace(&input, &re, &with);
         assert_eq!(result.unwrap(), expected);
@@ -405,7 +405,7 @@ mod tests {
         // Replace none
         let input = r"not a match".to_owned();
         let re = Regex::new(r"\d{3}-\d{2}-\d{4}").unwrap();
-        let with = "***-**-***".to_owned();
+        let with ="***-**-****".to_owned();
         let expected = "not a match".to_owned();
 
         let result = process_regex_replace(&input, &re, &with);
