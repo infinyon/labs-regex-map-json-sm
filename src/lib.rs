@@ -22,34 +22,23 @@ enum Operation {
     Replace(Replace)
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Debug, Deserialize)]
 struct Capture {
-    regex: String,
+    #[serde(with = "serde_regex")]
+    regex: Regex,
     target: String,
     output: String,
-
-    #[serde(skip)]
-    re: Option<Regex>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
 struct Replace {
-    regex: String,
+    #[serde(with = "serde_regex")]
+    regex: Regex,
     target: String,
     with: String,
-
-    #[serde(skip)]
-    re: Option<Regex>,
 }
 
 impl Operation {
-    pub fn get_re(&self) -> &Option<Regex> {
-        match self {
-            Operation::Capture(c) => &c.re,
-            Operation::Replace(r) => &r.re
-        }
-    }
-
     pub fn get_target(&self) -> &String {
         match self {
             Operation::Capture(c) => &c.target,
@@ -64,29 +53,13 @@ impl Operation {
         }
     }
 
-    pub fn clone_with_regex(&self) -> Result<Operation> {
-        let op = match self {
-            Operation::Capture(c) => {
-                let mut new = c.clone();
-                new.re = Some(Regex::new(&c.regex.as_str())?);
-                Operation::Capture(new)
-            },
-            Operation::Replace(r) => {
-                let mut new = r.clone();
-                new.re = Some(Regex::new(&r.regex.as_str())?);
-                Operation::Replace(new)
-            }
-        };
-        Ok(op)
-    }
-
     pub fn run_regex(&self, text: &String) -> Result<String> {
         let result = match self {
             Operation::Capture(c) => {
-                process_regex_capture(text, c.re.as_ref().unwrap())?
+                process_regex_capture(text, &c.regex)?
             },
             Operation::Replace(r) => {
-                process_regex_replace(text, &r.re.as_ref().unwrap(), &r.with)?
+                process_regex_replace(text, &r.regex, &r.with)?
             }
         };
         Ok(result)
@@ -109,18 +82,6 @@ fn get_params(params: SmartModuleExtraParams) -> Result<Vec<Operation>> {
     } else {
         Err(SmartModuleInitError::MissingParam(PARAM_NAME.to_string()).into())
     }
-}
-
-/// Loop over operations and compile regex
-fn compile_regex(operations: Vec<Operation>) -> Result<Vec<Operation>> {
-    let mut result: Vec<Operation> = vec![];
-
-    let mut iter = operations.into_iter();
-    while let Some(op) = iter.next() {
-        result.push(op.clone_with_regex()?);
-    }
-
-    Ok(result)
 }
 
 /// Extract json value based on JSON pointer notations:
@@ -226,12 +187,6 @@ fn apply_regex_ops_to_json_record(record: &Record, ops: &Vec<Operation>) -> Resu
 
     let mut iter = ops.into_iter();
     while let Some(op) = iter.next() {
-        // Skip if no Regex
-        let some_re = op.get_re();
-        if some_re.is_none() {
-            continue;
-        }
-
         // Skip if source doesn't exist
         let value = extract_json_field(data, &op.get_target())?;
         if value.is_empty() {
@@ -268,8 +223,7 @@ pub fn map(record: &Record) -> Result<(Option<RecordData>, RecordData)> {
 fn init(params: SmartModuleExtraParams) -> Result<()> {
     let ops = get_params(params)?;
 
-    let regex_ops = compile_regex(ops)?;
-    OPS.set(regex_ops).expect("regex operations already initialized");
+    OPS.set(ops).expect("regex operations already initialized");
 
     Ok(())
 }
@@ -292,30 +246,6 @@ mod tests {
             "ssn": "123-45-6789"
         }
     }"#;
-
-    #[test]
-    fn test_compile_regex() {
-        let params = vec![
-            Operation::Capture(Capture {
-                regex: r"(?i)First:\s+(\w+)\b".to_owned(), 
-                target: "/description".to_owned(), 
-                output: "/parsed/first".to_owned(),
-                re: None
-            }),
-            Operation::Replace(Replace {
-                regex: r"\d{3}-\d{2}-\d{4}".to_owned(),
-                target: "/name/ssn".to_owned(),
-                with: "***-**-****".to_owned(),
-                re: None
-            })
-        ];
-
-        let result = compile_regex(params);
-        assert!(result.is_ok());
-        for r in result.unwrap() {
-            assert!(r.get_re().is_some());
-        }
-    }
 
     #[test]
     fn extract_json_field_tests() {
@@ -502,47 +432,40 @@ mod tests {
                 "doc-link": "https://example.com/doc1/182031340621?pdf_header=&de_seq_num=44&caseid=456177"
             }
         }"#;
-        let spec: Vec<Operation> = vec![
+        let ops: Vec<Operation> = vec![
             Operation::Capture(Capture {
-                regex: r"(?i)First:\s+(\w+)\b".to_owned(), 
+                regex: Regex::new(r"(?i)First:\s+(\w+)\b").unwrap(), 
                 target: "/description".to_owned(), 
-                output: "/parsed/first".to_owned(),
-                re: None
+                output: "/parsed/first".to_owned()
             }),
             Operation::Capture(Capture {
-                regex: r"(?i)Second:\s+(\w+)\b".to_owned(),
+                regex: Regex::new(r"(?i)Second:\s+(\w+)\b").unwrap(), 
                 target: "/description".to_owned(), 
-                output: "/parsed/second".to_owned(),
-                re: None
+                output: "/parsed/second".to_owned()
             }),
             Operation::Capture(Capture {
-                regex: r"(?i)Third:\s+(\w+)\b".to_owned(),
+                regex: Regex::new(r"(?i)Third:\s+(\w+)\b").unwrap(), 
                 target: "/description".to_owned(), 
-                output: "/parsed/third".to_owned(),
-                re: None
+                output: "/parsed/third".to_owned()
             }),
             Operation::Capture(Capture {
-                regex: r"(?i)Fourth:\s+([\w,\s\.\']*\S)\s*\[".to_owned(),
+                regex: Regex::new(r"(?i)Fourth:\s+([\w,\s\.\']*\S)\s*\[").unwrap(), 
                 target: "/description".to_owned(), 
-                output: "/parsed/fourth".to_owned(),
-                re: None
+                output: "/parsed/fourth".to_owned()
             }),
             Operation::Capture(Capture {
-                regex: r"href='([^']+)'".to_owned(),
+                regex: Regex::new(r"href='([^']+)'").unwrap(), 
                 target: "/description".to_owned(), 
-                output: "/parsed/doc-link".to_owned(),
-                re: None
+                output: "/parsed/doc-link".to_owned()
             }),
             Operation::Replace(Replace {
-                regex: r"\d{3}-\d{2}-\d{4}".to_owned(),
+                regex: Regex::new( r"\d{3}-\d{2}-\d{4}").unwrap(), 
                 target: "/name/ssn".to_owned(),
-                with: "***-**-****".to_owned(),
-                re: None
+                with: "***-**-****".to_owned()
             })
         ];
 
         let record = Record::new(INPUT);
-        let ops = compile_regex(spec).unwrap();
         let result = apply_regex_ops_to_json_record(&record, &ops).unwrap();
         let expected_value:Value = serde_json::from_str(EXPECTED).unwrap();
         assert_eq!(result, expected_value);
