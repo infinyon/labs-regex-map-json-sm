@@ -74,6 +74,8 @@ A JSON object with a new `parsed` tree, and masked `ssn` value:
   },
   "description": "Highlights: 43 Entity: Draft Documents [Encased string - (data)] (<a href='https://example.com/doc1/182031340621?pdf_header=&de_seq_num=44&caseid=456177'>9</a>)",
   "parsed": {
+    "doc-link": "https://example.com/doc1/182031340621?pdf_header=&de_seq_num=44&caseid=456177",
+    "entity": "Draft Documents",
     "highlights": "43"
   }
 }
