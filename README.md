@@ -126,5 +126,10 @@ cargo build
 cargo test
 ```
 
+### References
+
+* [Regex Docs]
+
 
 [map]: https://www.fluvio.io/smartmodules/transform/map/
+[Regex Docs]: https://rust-lang-nursery.github.io/rust-cookbook/text/regex.html
