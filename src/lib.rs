@@ -5,7 +5,7 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use fluvio_smartmodule::{
-    smartmodule, Result, Record, RecordData,
+    smartmodule, Result, SmartModuleRecord, RecordData,
     dataplane::smartmodule::{
         SmartModuleExtraParams, SmartModuleInitError
     },
@@ -181,7 +181,7 @@ fn add_json_key_value(json: &mut Value, key_path: &String, new_value: Value ) {
 }
 
 /// Traverse the regex list, extract JSON values, compute regex, and save output
-fn apply_regex_ops_to_json_record(record: &Record, ops: &Vec<Operation>) -> Result<Value> {
+fn apply_regex_ops_to_json_record(record: &SmartModuleRecord, ops: &Vec<Operation>) -> Result<Value> {
     let data: &str = std::str::from_utf8(record.value.as_ref())?;
     let mut json:Value = serde_json::from_str(data)?;
 
@@ -211,7 +211,7 @@ fn apply_regex_ops_to_json_record(record: &Record, ops: &Vec<Operation>) -> Resu
 }    
 
 #[smartmodule(map)]
-pub fn map(record: &Record) -> Result<(Option<RecordData>, RecordData)> {
+pub fn map(record: &SmartModuleRecord) -> Result<(Option<RecordData>, RecordData)> {
     let key = record.key.clone();
     let ops = OPS.get().wrap_err("regex operations not initialized")?;
 
@@ -232,6 +232,7 @@ fn init(params: SmartModuleExtraParams) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use fluvio_smartmodule::Record;
 
     static INPUT: &str = r#"{
         "dedup_key": "6fcb9fe530c24613ed1df3e51c0e86addd794251f49ec6cd77fd4381cc0e0ac2",
@@ -465,7 +466,7 @@ mod tests {
             })
         ];
 
-        let record = Record::new(INPUT);
+        let record = SmartModuleRecord::new(Record::new(INPUT), 0, 0);
         let result = apply_regex_ops_to_json_record(&record, &ops).unwrap();
         let expected_value:Value = serde_json::from_str(EXPECTED).unwrap();
         assert_eq!(result, expected_value);
